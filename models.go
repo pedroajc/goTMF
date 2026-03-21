@@ -1,3 +1,4 @@
+// models.go
 package main
 
 type TimePeriod struct {
@@ -28,4 +29,10 @@ type ProductOffering struct {
 	AtBaseType      string      `json:"@baseType,omitempty"`
 	IsBundle        *bool       `json:"isBundle,omitempty"`
 	ValidFor        *TimePeriod `json:"validFor,omitempty"`
+}
+
+type Error struct {
+	Code    string `json:"code"`
+	Reason  string `json:"reason"`
+	Message string `json:"message,omitempty"`
 }
