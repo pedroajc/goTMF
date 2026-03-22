@@ -3,9 +3,12 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"slices"
+	"strings"
 )
 
 var catalogs = []Catalog{
@@ -23,9 +26,32 @@ func writeError(w http.ResponseWriter, status int, code, reason string) {
 
 func handleListCatalogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(catalogs); err != nil {
+
+	filterParams := r.URL.Query().Get("fields")
+
+	if filterParams == "" {
+		if err := json.NewEncoder(w).Encode(catalogs); err != nil {
+			log.Printf("encode error: %v", err)
+		}
+		return
+	}
+
+	data, err := json.Marshal(catalogs)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "500", "internal error")
+		return
+	}
+
+	resp, err := filterFields(data, filterParams)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "500", "internal error")
+		return
+	}
+
+	if _, err := w.Write(resp); err != nil {
 		log.Printf("encode error: %v", err)
 	}
+
 }
 
 func handleGetCatalog(w http.ResponseWriter, r *http.Request) {
@@ -39,4 +65,24 @@ func handleGetCatalog(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(catalogs[index]); err != nil {
 		log.Printf("encode error: %v", err)
 	}
+}
+
+func filterFields(data []byte, fields string) ([]byte, error) {
+	paramFields := strings.Split(fields, ",")
+
+	var filterMap []map[string]any
+	if err := json.Unmarshal(data, &filterMap); err != nil {
+		return nil, fmt.Errorf("unmarshal error: %w", err)
+	}
+
+	for _, cat := range filterMap {
+		maps.DeleteFunc(cat, func(k string, v any) bool { return !slices.Contains(paramFields, k) })
+	}
+
+	marMap, err := json.Marshal(filterMap)
+	if err != nil {
+		return nil, fmt.Errorf("marshal error: %w", err)
+	}
+	return marMap, nil
+
 }
