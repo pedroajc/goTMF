@@ -2,6 +2,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 )
 
 var catalogs = []Catalog{
@@ -56,15 +58,111 @@ func handleListCatalogs(w http.ResponseWriter, r *http.Request) {
 
 func handleGetCatalog(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	index := slices.IndexFunc(catalogs, func(c Catalog) bool { return c.ID == id })
+	index, catalog := findCatalog(id)
 	if index == -1 {
 		writeError(w, http.StatusNotFound, "404", "catalog not found")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(catalogs[index]); err != nil {
+	if err := json.NewEncoder(w).Encode(*catalog); err != nil {
 		log.Printf("encode error: %v", err)
 	}
+}
+
+func handleCreateCatalog(w http.ResponseWriter, r *http.Request) {
+	var input Catalog
+	defer r.Body.Close()
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "400", "body is not a catalog")
+		return
+	}
+
+	if input.Name == "" {
+		writeError(w, http.StatusBadRequest, "400", "name is required")
+		return
+	}
+
+	input.ID = generateID()
+	input.Href = fmt.Sprintf("/catalogManagement/v4/catalog/%s", input.ID)
+	input.LastUpdate = time.Now().UTC().Format(time.RFC3339)
+	if input.AtType == "" {
+		input.AtType = "Catalog"
+	}
+
+	catalogs = append(catalogs, input)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Location", input.Href)
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(input); err != nil {
+		log.Printf("unable to create catalog: %v", err)
+	}
+}
+
+func handleUpdateCatalog(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	id := r.PathValue("id")
+	index, catalog := findCatalog(id)
+	if index == -1 {
+		writeError(w, http.StatusNotFound, "404", "catalog not found")
+		return
+	}
+
+	existing, err := json.Marshal(*catalog)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "500", "internal error")
+		return
+	}
+	var original map[string]any
+	if err := json.Unmarshal(existing, &original); err != nil {
+		writeError(w, http.StatusInternalServerError, "500", "internal error")
+		return
+	}
+
+	var overlay map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&overlay); err != nil {
+		writeError(w, http.StatusBadRequest, "400", "bad request")
+		return
+	}
+
+	for key, value := range overlay {
+		original[key] = value
+	}
+
+	newCat, err := json.Marshal(original)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "500", "internal error")
+		return
+	}
+	var updated Catalog
+	if err := json.Unmarshal(newCat, &updated); err != nil {
+		writeError(w, http.StatusInternalServerError, "500", "internal error")
+		return
+	}
+
+	updated.ID = catalog.ID
+	updated.Href = catalog.Href
+	updated.LastUpdate = time.Now().UTC().Format(time.RFC3339)
+
+	catalogs[index] = updated
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(updated); err != nil {
+		log.Printf("encode error: %v", err)
+		return
+	}
+}
+
+func handleDeleteCatalog(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	index, _ := findCatalog(id)
+	if index == -1 {
+		writeError(w, http.StatusNotFound, "404", "not found")
+		return
+	}
+
+	catalogs = slices.Delete(catalogs, index, index+1)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func filterFields(data []byte, fields string) ([]byte, error) {
@@ -85,4 +183,18 @@ func filterFields(data []byte, fields string) ([]byte, error) {
 	}
 	return marMap, nil
 
+}
+
+func generateID() string {
+	b := make([]byte, 4)
+	rand.Read(b)
+	return fmt.Sprintf("%x", b)
+}
+
+func findCatalog(id string) (int, *Catalog) {
+	index := slices.IndexFunc(catalogs, func(c Catalog) bool { return c.ID == id })
+	if index == -1 {
+		return -1, nil
+	}
+	return index, &catalogs[index]
 }

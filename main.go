@@ -12,6 +12,9 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /catalogManagement/v4/catalog", handleListCatalogs)
 	mux.HandleFunc("GET /catalogManagement/v4/catalog/{id}", handleGetCatalog)
+	mux.HandleFunc("POST /catalogManagement/v4/catalog", handleCreateCatalog)
+	mux.HandleFunc("PATCH /catalogManagement/v4/catalog/{id}", handleUpdateCatalog)
+	mux.HandleFunc("DELETE /catalogManagement/v4/catalog/{id}", handleDeleteCatalog)
 
 	server := &http.Server{
 		Addr:    ":8080",

@@ -21,6 +21,9 @@ func makeRequest(ctx context.Context, url string, method string, body io.Reader)
 	}
 
 	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
