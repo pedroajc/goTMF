@@ -19,7 +19,7 @@ func main() {
 	mux.HandleFunc("DELETE /catalogManagement/v4/hub/{id}", handleDeleteHub)
 
 	server := &http.Server{
-		Addr:    ":8080",
+		Addr:    ":8081",
 		Handler: mux,
 	}
 
@@ -33,7 +33,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	catalogs, err := fetchRemoteCatalogs(ctx, "http://localhost:8080")
+	catalogs, err := fetchRemoteCatalogs(ctx, "http://localhost:8081")
 	if err != nil {
 		log.Printf("error in startup probe %v", err)
 		return
