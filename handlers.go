@@ -90,7 +90,7 @@ func handleCreateCatalog(w http.ResponseWriter, r *http.Request) {
 	}
 
 	catalogs = append(catalogs, input)
-
+	go dispatchEvent(buildEvent("CatalogCreateEvent", input))
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Location", input.Href)
 	w.WriteHeader(http.StatusCreated)
@@ -145,7 +145,7 @@ func handleUpdateCatalog(w http.ResponseWriter, r *http.Request) {
 	updated.LastUpdate = time.Now().UTC().Format(time.RFC3339)
 
 	catalogs[index] = updated
-
+	go dispatchEvent(buildEvent("CatalogAttributeValueChangeEvent", updated))
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(updated); err != nil {
 		log.Printf("encode error: %v", err)
@@ -155,13 +155,53 @@ func handleUpdateCatalog(w http.ResponseWriter, r *http.Request) {
 
 func handleDeleteCatalog(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	index, _ := findCatalog(id)
+	index, catalog := findCatalog(id)
 	if index == -1 {
 		writeError(w, http.StatusNotFound, "404", "not found")
 		return
 	}
+	deleted := *catalog
 
 	catalogs = slices.Delete(catalogs, index, index+1)
+	go dispatchEvent(buildEvent("CatalogDeleteEvent", deleted))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func handleRegisterHub(w http.ResponseWriter, r *http.Request) {
+	var body HubSubscription
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "400", "bad request")
+		return
+	}
+	if body.Callback == "" {
+		writeError(w, http.StatusBadRequest, "400", "empty callback")
+		return
+	}
+
+	body.ID = generateID()
+	subsMu.Lock()
+	subscriptions = append(subscriptions, body)
+	subsMu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		log.Printf("encode error: %v", err)
+	}
+
+}
+
+func handleDeleteHub(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	subsMu.Lock()
+	originalLen := len(subscriptions)
+	subscriptions = slices.DeleteFunc(subscriptions, func(s HubSubscription) bool { return s.ID == id })
+	finalLen := len(subscriptions)
+	subsMu.Unlock()
+
+	if originalLen <= finalLen {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

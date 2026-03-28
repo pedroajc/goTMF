@@ -60,16 +60,6 @@ type ProductSpecification struct {
 	Version         string      `json:"version,omitempty"`
 }
 
-type Error struct {
-	Code           string `json:"code"`
-	Reason         string `json:"reason"`
-	Message        string `json:"message,omitempty"`
-	Status         string `json:"status,omitempty"`
-	ReferenceError string `json:"referenceError,omitempty"`
-	AtType         string `json:"@type,omitempty"`
-	AtBaseType     string `json:"@baseType,omitempty"`
-}
-
 type CategoryRef struct {
 	ID   string `json:"id"`
 	Href string `json:"href"`
@@ -87,4 +77,34 @@ type ProductSpecificationRef struct {
 	Href    string `json:"href"`
 	Name    string `json:"name"`
 	Version string `json:"version,omitempty"`
+}
+
+type Event struct {
+	ID          string    `json:"id"`
+	Href        string    `json:"href,omitempty"`
+	EventID     string    `json:"eventId"`
+	EventTime   string    `json:"eventTime"`
+	EventType   string    `json:"eventType"`
+	Description string    `json:"description,omitempty"`
+	Event       EventData `json:"event"`
+}
+
+type EventData struct {
+	Catalog *Catalog `json:"catalog,omitempty"`
+}
+
+type HubSubscription struct {
+	ID       string `json:"id"`
+	Callback string `json:"callback"`
+	Query    string `json:"query,omitempty"`
+}
+
+type Error struct {
+	Code           string `json:"code"`
+	Reason         string `json:"reason"`
+	Message        string `json:"message,omitempty"`
+	Status         string `json:"status,omitempty"`
+	ReferenceError string `json:"referenceError,omitempty"`
+	AtType         string `json:"@type,omitempty"`
+	AtBaseType     string `json:"@baseType,omitempty"`
 }

@@ -15,6 +15,8 @@ func main() {
 	mux.HandleFunc("POST /catalogManagement/v4/catalog", handleCreateCatalog)
 	mux.HandleFunc("PATCH /catalogManagement/v4/catalog/{id}", handleUpdateCatalog)
 	mux.HandleFunc("DELETE /catalogManagement/v4/catalog/{id}", handleDeleteCatalog)
+	mux.HandleFunc("POST /catalogManagement/v4/hub", handleRegisterHub)
+	mux.HandleFunc("DELETE /catalogManagement/v4/hub/{id}", handleDeleteHub)
 
 	server := &http.Server{
 		Addr:    ":8080",
