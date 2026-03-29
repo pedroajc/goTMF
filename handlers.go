@@ -9,7 +9,9 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -20,33 +22,36 @@ var catalogs = []Catalog{
 		Name: "Retail Catalogue", LifecycleStatus: "Active", AtType: "Catalog"},
 }
 
-func writeError(w http.ResponseWriter, status int, code, reason string) {
+var muCat sync.RWMutex
+
+func writeError(w http.ResponseWriter, status int, code, reason string, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(Error{Code: code, Reason: reason})
+	json.NewEncoder(w).Encode(Error{Code: code, Reason: reason, Message: message, Status: strconv.Itoa(status)})
 }
 
 func handleListCatalogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	filterParams := r.URL.Query().Get("fields")
+	muCat.RLock()
+	data, err := json.Marshal(catalogs)
+	muCat.RUnlock()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "500", "internal error", "unable to marshal catalogs")
+		return
+	}
 
 	if filterParams == "" {
-		if err := json.NewEncoder(w).Encode(catalogs); err != nil {
+		if _, err := w.Write(data); err != nil {
 			log.Printf("encode error: %v", err)
 		}
 		return
 	}
 
-	data, err := json.Marshal(catalogs)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "500", "internal error")
-		return
-	}
-
 	resp, err := filterFields(data, filterParams)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "500", "internal error")
+		writeError(w, http.StatusInternalServerError, "500", "internal error", "unable to filter the catalogs")
 		return
 	}
 
@@ -58,13 +63,18 @@ func handleListCatalogs(w http.ResponseWriter, r *http.Request) {
 
 func handleGetCatalog(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	index, catalog := findCatalog(id)
+	muCat.RLock()
+	index, foundCat := findCatalog(id)
 	if index == -1 {
-		writeError(w, http.StatusNotFound, "404", "catalog not found")
+		muCat.RUnlock()
+		writeError(w, http.StatusNotFound, "404", "catalog not found", "ID doesn't exist in the store")
 		return
 	}
+	catalog := *foundCat
+	muCat.RUnlock()
+
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(*catalog); err != nil {
+	if err := json.NewEncoder(w).Encode(catalog); err != nil {
 		log.Printf("encode error: %v", err)
 	}
 }
@@ -73,55 +83,61 @@ func handleCreateCatalog(w http.ResponseWriter, r *http.Request) {
 	var input Catalog
 	defer r.Body.Close()
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "400", "body is not a catalog")
+		writeError(w, http.StatusBadRequest, "400", "malformed input", "body is not a catalog")
 		return
 	}
 
 	if input.Name == "" {
-		writeError(w, http.StatusBadRequest, "400", "name is required")
+		writeError(w, http.StatusBadRequest, "400", "malformed input", "name is required")
 		return
 	}
 
-	input.ID = generateID()
-	input.Href = fmt.Sprintf("/catalogManagement/v4/catalog/%s", input.ID)
 	input.LastUpdate = time.Now().UTC().Format(time.RFC3339)
 	if input.AtType == "" {
 		input.AtType = "Catalog"
 	}
-
+	muCat.Lock()
+	input.ID = generateID()
+	input.Href = fmt.Sprintf("/catalogManagement/v4/catalog/%s", input.ID)
 	catalogs = append(catalogs, input)
+	muCat.Unlock()
+
 	go dispatchEvent(buildEvent("CatalogCreateEvent", input))
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Location", input.Href)
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(input); err != nil {
-		log.Printf("unable to create catalog: %v", err)
+		log.Printf("unable to encode response: %v", err)
 	}
 }
 
 func handleUpdateCatalog(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	id := r.PathValue("id")
-	index, catalog := findCatalog(id)
+	muCat.Lock()
+	index, catalogPtr := findCatalog(id)
 	if index == -1 {
-		writeError(w, http.StatusNotFound, "404", "catalog not found")
+		muCat.Unlock()
+		writeError(w, http.StatusNotFound, "404", "invalid ID", "ID doesn't exist in the store")
 		return
 	}
+	catalog := *catalogPtr
+	muCat.Unlock()
 
-	existing, err := json.Marshal(*catalog)
+	existing, err := json.Marshal(catalog)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "500", "internal error")
+		writeError(w, http.StatusInternalServerError, "500", "internal error", "unable to marshal catalog")
 		return
 	}
 	var original map[string]any
 	if err := json.Unmarshal(existing, &original); err != nil {
-		writeError(w, http.StatusInternalServerError, "500", "internal error")
+		writeError(w, http.StatusInternalServerError, "500", "internal error", "unable to unmarshal catalog")
 		return
 	}
 
 	var overlay map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&overlay); err != nil {
-		writeError(w, http.StatusBadRequest, "400", "bad request")
+		writeError(w, http.StatusBadRequest, "400", "malformed request", "body is not valid JSON")
 		return
 	}
 
@@ -131,20 +147,29 @@ func handleUpdateCatalog(w http.ResponseWriter, r *http.Request) {
 
 	newCat, err := json.Marshal(original)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "500", "internal error")
+		writeError(w, http.StatusInternalServerError, "500", "internal error", "unable to marshal updated catalog")
 		return
 	}
 	var updated Catalog
 	if err := json.Unmarshal(newCat, &updated); err != nil {
-		writeError(w, http.StatusInternalServerError, "500", "internal error")
+		writeError(w, http.StatusInternalServerError, "500", "internal error", "unable to unmarshal updated catalog")
 		return
 	}
 
+	updated.LastUpdate = time.Now().UTC().Format(time.RFC3339)
 	updated.ID = catalog.ID
 	updated.Href = catalog.Href
-	updated.LastUpdate = time.Now().UTC().Format(time.RFC3339)
 
+	muCat.Lock()
+	index, catalogPtr = findCatalog(id)
+	if index == -1 {
+		muCat.Unlock()
+		writeError(w, http.StatusNotFound, "404", "invalid ID", "ID no longer exists in the store")
+		return
+	}
 	catalogs[index] = updated
+	muCat.Unlock()
+
 	go dispatchEvent(buildEvent("CatalogAttributeValueChangeEvent", updated))
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(updated); err != nil {
@@ -155,14 +180,17 @@ func handleUpdateCatalog(w http.ResponseWriter, r *http.Request) {
 
 func handleDeleteCatalog(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	muCat.Lock()
 	index, catalog := findCatalog(id)
 	if index == -1 {
-		writeError(w, http.StatusNotFound, "404", "not found")
+		muCat.Unlock()
+		writeError(w, http.StatusNotFound, "404", "not found", "ID doesn't exist in the store")
 		return
 	}
 	deleted := *catalog
-
 	catalogs = slices.Delete(catalogs, index, index+1)
+	muCat.Unlock()
+
 	go dispatchEvent(buildEvent("CatalogDeleteEvent", deleted))
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -170,19 +198,25 @@ func handleDeleteCatalog(w http.ResponseWriter, r *http.Request) {
 func handleRegisterHub(w http.ResponseWriter, r *http.Request) {
 	var body HubSubscription
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "400", "bad request")
+		writeError(w, http.StatusBadRequest, "400", "bad request", "body is not valid JSON")
 		return
 	}
 	if body.Callback == "" {
-		writeError(w, http.StatusBadRequest, "400", "empty callback")
+		writeError(w, http.StatusBadRequest, "400", "bad request", "empty callback")
 		return
 	}
 
 	body.ID = generateID()
 	subsMu.Lock()
+	if slices.ContainsFunc(subscriptions, func(s HubSubscription) bool { return s.Callback == body.Callback }) {
+		subsMu.Unlock()
+		writeError(w, http.StatusConflict, "409", "callback conflict", "callback already registered")
+		return
+	}
 	subscriptions = append(subscriptions, body)
 	subsMu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Location", fmt.Sprintf("/tmf-api/hub/%s", body.ID))
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(body); err != nil {
 		log.Printf("encode error: %v", err)
@@ -198,8 +232,8 @@ func handleDeleteHub(w http.ResponseWriter, r *http.Request) {
 	finalLen := len(subscriptions)
 	subsMu.Unlock()
 
-	if originalLen <= finalLen {
-		w.WriteHeader(http.StatusNotFound)
+	if originalLen == finalLen {
+		writeError(w, http.StatusNotFound, "404", "not found", "hub subscription ID does not exist")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

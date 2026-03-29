@@ -14,7 +14,7 @@ import (
 
 var (
 	subscriptions []HubSubscription
-	subsMu        sync.Mutex
+	subsMu        sync.RWMutex
 )
 
 func buildEvent(eventType string, catalog Catalog) Event {
